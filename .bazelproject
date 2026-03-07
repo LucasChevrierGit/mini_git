@@ -1,0 +1,6 @@
+directories:
+  src/main/java
+
+targets:
+  //src/main/java/mini_git:mini_git
+

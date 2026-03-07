@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <option name="BUILD_PROCESS_HEAP_SIZE" value="2048" />
+  </component>
+  <component name="JavacSettings">
+    <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="src.main.java.mini_git.mini_git" options="-source 11 -target 11 -XDskipDuplicateBridges=true -XDcompilePolicy=simple --should-stop=ifError=FLOW -g -parameters -Xep:IgnoredPureGetter:OFF -Xep:EmptyTopLevelDeclaration:OFF -Xep:LenientFormatStringValidation:OFF -Xep:ReturnMissingNullable:OFF -Xep:UseCorrectAssertInTests:OFF -Xmaxwarns -1" />
+    </option>
+  </component>
+</project>
