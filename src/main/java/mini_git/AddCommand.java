@@ -27,7 +27,11 @@ public class AddCommand implements Runnable {
 
     @Override
     public void run() {
-        List<String> filesToAdd = findUnstagedFile(paths);
+        // Load current index as a map: path -> hash
+        Map<String, String> indexed = loadIndex();
+        Set<String> ignored = loadIgnore();
+        List<String> filesToAdd = findFilesToAdd(paths, indexed, ignored);
+
         for (String file : filesToAdd) {
             try {
                 MessageDigest digest = MessageDigest.getInstance("SHA-1");
@@ -39,55 +43,69 @@ public class AddCommand implements Runnable {
                 }
                 String hashS = hashBuilder.toString();
 
-                Path objects = Path.of(".minigit","objects", hashS);
-                if (Files.exists(objects)){
+                // Skip if already staged with the same hash
+                if (hashS.equals(indexed.get(file))) {
                     continue;
                 }
 
-                Files.write(objects, content);
-                Files.write(indexPath,
-                        (hashS + " " + file + System.lineSeparator()).getBytes(StandardCharsets.UTF_8),
-                        StandardOpenOption.APPEND,
-                        StandardOpenOption.CREATE);
+                // Store blob
+                Path objects = Path.of(".minigit", "objects", hashS);
+                if (!Files.exists(objects)) {
+                    Files.write(objects, content);
+                }
 
+                // Update index entry
+                indexed.put(file, hashS);
                 System.out.println("Added file: " + file);
             } catch (Exception e) {
                 System.err.println("Failed to read file: " + e.getMessage());
             }
         }
+
+        // Rewrite the index file
+        writeIndex(indexed);
     }
 
-    private List<String> findUnstagedFile(String[] args) {
-        boolean addAll = Arrays.asList(args).contains(".");
-        Set<String> indexed = new HashSet<>();
+    private Map<String, String> loadIndex() {
+        Map<String, String> index = new LinkedHashMap<>();
         if (Files.exists(indexPath)) {
             try {
-                List<String> lines = Files.readAllLines(indexPath);
-                for (String line : lines) {
+                for (String line : Files.readAllLines(indexPath)) {
                     String[] parts = line.split(" ", 2);
                     if (parts.length == 2) {
-                        indexed.add(parts[1]);
+                        index.put(parts[1], parts[0]); // path -> hash
                     }
                 }
             } catch (IOException e) {
                 System.err.println("Failed to read index: " + e.getMessage());
             }
         }
+        return index;
+    }
 
-        Set<String> ignored = loadIgnore();
+    private void writeIndex(Map<String, String> index) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : index.entrySet()) {
+            sb.append(entry.getValue()).append(" ").append(entry.getKey()).append(System.lineSeparator());
+        }
+        try {
+            Files.writeString(indexPath, sb.toString());
+        } catch (IOException e) {
+            System.err.println("Failed to write index: " + e.getMessage());
+        }
+    }
+
+    private List<String> findFilesToAdd(String[] args, Map<String, String> indexed, Set<String> ignored) {
+        boolean addAll = Arrays.asList(args).contains(".");
+
         try (Stream<Path> paths = Files.walk(this.current_dir)) {
-            List<String> untracked = paths
+            return paths
                     .filter(Files::isRegularFile)
                     .map(p -> current_dir.relativize(p).toString())
                     .filter(p -> !p.startsWith(".minigit"))
                     .filter(p -> !isIgnored(p, ignored))
                     .filter(p -> addAll || Arrays.asList(args).contains(p))
-                    .filter(p -> !indexed.contains(p))
                     .collect(Collectors.toList());
-
-            if (!untracked.isEmpty()) {
-                return untracked;
-            }
         } catch (IOException e) {
             System.err.println("Failed to list files: " + e.getMessage());
         }

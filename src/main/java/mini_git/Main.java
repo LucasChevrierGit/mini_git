@@ -13,7 +13,8 @@ import picocli.CommandLine;
         AddCommand.class,
         RestoreCommand.class,
         RemoteCommand.class,
-        PushCommand.class
+        PushCommand.class,
+        CommitCommand.class,
     }
 )
 public class Main implements Runnable {
@@ -25,7 +26,9 @@ public class Main implements Runnable {
     }
 
     public static void main(String[] args) {
-        int exitCode = new CommandLine(new Main()).execute(args);
+        int exitCode = new CommandLine(new Main())
+                .setExecutionStrategy(new CommandLine.RunLast())
+                .execute(args);
         System.exit(exitCode);
     }
 }

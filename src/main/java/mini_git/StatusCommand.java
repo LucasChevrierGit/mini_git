@@ -33,53 +33,45 @@ public class StatusCommand implements Runnable {
         Set<String> working = listWorkingFiles();
 
         // Section 1: Changes to be committed (staged files)
-        // new file = in index, exists on disk
-        // deleted  = in index, no longer on disk
-        // modified = in index, on disk but hash changed
+        // new file = in index, exists on disk, hash matches
         List<String> stagedNew = new ArrayList<>();
-        List<String> stagedDeleted = new ArrayList<>();
-        List<String> stagedModified = new ArrayList<>();
+        // Section 2: Changes not staged for commit
+        // deleted  = in index, no longer on disk
+        // modified = in index, on disk but hash changed since staging
+        List<String> unstagedDeleted = new ArrayList<>();
+        List<String> unstagedModified = new ArrayList<>();
         for (Map.Entry<String, String> entry : indexed.entrySet()) {
             String file = entry.getKey();
             String storedHash = entry.getValue();
             if (!working.contains(file)) {
-                stagedDeleted.add(file);
+                unstagedDeleted.add(file);
             } else {
                 String currentHash = computeHash(Path.of(file));
                 if (currentHash != null && !currentHash.equals(storedHash)) {
-                    stagedModified.add(file);
-                } else {
-                    stagedNew.add(file);
+                    unstagedModified.add(file);
                 }
+                stagedNew.add(file);
             }
         }
         Collections.sort(stagedNew);
-        Collections.sort(stagedDeleted);
-        Collections.sort(stagedModified);
-        if (!stagedNew.isEmpty() || !stagedDeleted.isEmpty() || !stagedModified.isEmpty()) {
+        Collections.sort(unstagedDeleted);
+        Collections.sort(unstagedModified);
+        if (!stagedNew.isEmpty()) {
             System.out.println("Changes to be committed:");
             System.out.println("  (use \"minigit restore --staged <file>...\" to unstage)");
             for (String file : stagedNew) {
                 System.out.println(GREEN + "        new file:   " + file + RESET);
             }
-            for (String file : stagedModified) {
-                System.out.println(GREEN + "        modified:   " + file + RESET);
-            }
-            for (String file : stagedDeleted) {
-                System.out.println(GREEN + "        deleted:    " + file + RESET);
-            }
             System.out.println();
         }
 
-        // Section 2: Changes not staged for commit
-        // These are files that were staged, modified since, but not re-added
-        if (!stagedModified.isEmpty() || !stagedDeleted.isEmpty()) {
+        if (!unstagedModified.isEmpty() || !unstagedDeleted.isEmpty()) {
             System.out.println("Changes not staged for commit:");
             System.out.println("  (use \"minigit add <file>...\" to update what will be committed)");
-            for (String file : stagedModified) {
+            for (String file : unstagedModified) {
                 System.out.println(RED + "        modified:   " + file + RESET);
             }
-            for (String file : stagedDeleted) {
+            for (String file : unstagedDeleted) {
                 System.out.println(RED + "        deleted:    " + file + RESET);
             }
             System.out.println();
@@ -97,7 +89,7 @@ public class StatusCommand implements Runnable {
             System.out.println();
         }
 
-        if (stagedNew.isEmpty() && stagedModified.isEmpty() && stagedDeleted.isEmpty() && untracked.isEmpty()) {
+        if (stagedNew.isEmpty() && unstagedModified.isEmpty() && unstagedDeleted.isEmpty() && untracked.isEmpty()) {
             System.out.println("Nothing to report, working tree clean.");
         }
     }

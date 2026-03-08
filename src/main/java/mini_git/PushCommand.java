@@ -7,13 +7,14 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
-@CommandLine.Command(name = "push", description = "Push staged files to GitHub")
+@CommandLine.Command(name = "push", description = "Push local commits to GitHub")
 public class PushCommand implements Runnable {
 
     private static final String ANSI_GREEN = "\u001B[32m";
@@ -22,10 +23,8 @@ public class PushCommand implements Runnable {
     private static final String API_BASE = "https://api.github.com/repos/";
 
     private final Path configPath = Path.of(".minigit", "config");
-    private final Path indexPath = Path.of(".minigit", "index");
-
-    @CommandLine.Option(names = {"-m", "--message"}, description = "Commit message", defaultValue = "minigit push")
-    private String message;
+    private final Path headPath = Path.of(".minigit", "HEAD");
+    private final Path objectsDir = Path.of(".minigit", "objects");
 
     @CommandLine.Option(names = {"--branch"}, description = "Branch to push to", defaultValue = "master")
     private String branch;
@@ -51,21 +50,52 @@ public class PushCommand implements Runnable {
         String owner = parts[0];
         String repo = parts[1];
 
-        if (!Files.exists(indexPath)) {
-            System.err.println("Nothing to push. Stage files first with: minigit add <files>");
-            return;
-        }
-
-        List<String> indexLines;
+        // Read the local HEAD commit
+        String localCommitSha;
         try {
-            indexLines = Files.readAllLines(indexPath);
+            localCommitSha = resolveHead();
         } catch (IOException e) {
-            System.err.println("Failed to read index: " + e.getMessage());
+            System.err.println("Failed to read HEAD: " + e.getMessage());
             return;
         }
 
-        if (indexLines.isEmpty()) {
-            System.err.println("Nothing to push. Stage files first with: minigit add <files>");
+        if (localCommitSha == null) {
+            System.err.println("Nothing to push. Commit first with: minigit commit <message>");
+            return;
+        }
+
+        // Read the local commit object
+        String commitContent;
+        try {
+            commitContent = Files.readString(objectsDir.resolve(localCommitSha), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("Failed to read commit object: " + e.getMessage());
+            return;
+        }
+
+        String treeSha = extractField(commitContent, "tree");
+        String commitMessage = extractMessage(commitContent);
+
+        // Read the local tree object
+        String treeContent;
+        try {
+            treeContent = Files.readString(objectsDir.resolve(treeSha), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("Failed to read tree object: " + e.getMessage());
+            return;
+        }
+
+        // Parse tree entries: "100644 <hash> <path>"
+        List<String[]> treeEntries = new ArrayList<>();
+        for (String line : treeContent.split("\n")) {
+            String[] entryParts = line.split(" ", 3);
+            if (entryParts.length == 3) {
+                treeEntries.add(entryParts); // [mode, hash, path]
+            }
+        }
+
+        if (treeEntries.isEmpty()) {
+            System.err.println("Nothing to push. Empty tree.");
             return;
         }
 
@@ -73,41 +103,33 @@ public class PushCommand implements Runnable {
         String apiBase = API_BASE + owner + "/" + repo;
 
         try {
-            // Step 1: Get current HEAD ref
+            // Step 1: Get current remote HEAD ref
             String refResponse = getJson(client, apiBase + "/git/refs/heads/" + branch, token);
-            String headSha = extractJsonValue(refResponse, "sha");
+            String remoteHeadSha = extractJsonValue(refResponse, "sha");
 
-            // Step 2: Get base tree SHA
-            String commitResponse = getJson(client, apiBase + "/git/commits/" + headSha, token);
-            String baseTreeSha = extractNestedJsonValue(commitResponse, "tree", "sha");
+            // Step 2: Get base tree SHA from remote
+            String remoteCommitResponse = getJson(client, apiBase + "/git/commits/" + remoteHeadSha, token);
+            String baseTreeSha = extractNestedJsonValue(remoteCommitResponse, "tree", "sha");
 
-            // Step 3: Create a blob for each staged file
-            List<String> treeParts = new ArrayList<>();
+            // Step 3: Create a blob on GitHub for each file in the tree
+            List<String> remoteTreeParts = new ArrayList<>();
             int success = 0;
             int failed = 0;
 
-            for (String line : indexLines) {
-                String[] lineParts = line.split(" ", 2);
-                if (lineParts.length < 2) continue;
-
-                String filePath = lineParts[1];
-                Path file = Path.of(filePath);
-
-                if (!Files.exists(file)) {
-                    System.out.println(ANSI_RED + "SKIP " + filePath + " (file not found)" + ANSI_RESET);
-                    failed++;
-                    continue;
-                }
+            for (String[] entry : treeEntries) {
+                String blobHash = entry[1];
+                String filePath = entry[2];
 
                 try {
-                    byte[] content = Files.readAllBytes(file);
+                    // Read blob content from local objects
+                    byte[] content = Files.readAllBytes(objectsDir.resolve(blobHash));
                     String encoded = Base64.getEncoder().encodeToString(content);
 
                     String blobBody = "{\"content\":\"" + encoded + "\",\"encoding\":\"base64\"}";
                     String blobResponse = postJson(client, apiBase + "/git/blobs", token, blobBody);
-                    String blobSha = extractJsonValue(blobResponse, "sha");
+                    String remoteBlobSha = extractJsonValue(blobResponse, "sha");
 
-                    treeParts.add("{\"path\":\"" + escapeJson(filePath) + "\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + blobSha + "\"}");
+                    remoteTreeParts.add("{\"path\":\"" + escapeJson(filePath) + "\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + remoteBlobSha + "\"}");
                     System.out.println(ANSI_GREEN + "BLOB " + filePath + ANSI_RESET);
                     success++;
                 } catch (Exception e) {
@@ -116,22 +138,22 @@ public class PushCommand implements Runnable {
                 }
             }
 
-            if (treeParts.isEmpty()) {
+            if (remoteTreeParts.isEmpty()) {
                 System.err.println("No blobs created. Nothing to push.");
                 return;
             }
 
-            // Step 4: Create a tree referencing all blobs
-            String treeBody = "{\"base_tree\":\"" + baseTreeSha + "\",\"tree\":[" + String.join(",", treeParts) + "]}";
+            // Step 4: Create tree on GitHub
+            String treeBody = "{\"base_tree\":\"" + baseTreeSha + "\",\"tree\":[" + String.join(",", remoteTreeParts) + "]}";
             String treeResponse = postJson(client, apiBase + "/git/trees", token, treeBody);
             String newTreeSha = extractJsonValue(treeResponse, "sha");
 
-            // Step 5: Create a commit
-            String commitBody = "{\"message\":\"" + escapeJson(message) + "\",\"tree\":\"" + newTreeSha + "\",\"parents\":[\"" + headSha + "\"]}";
+            // Step 5: Create commit on GitHub
+            String commitBody = "{\"message\":\"" + escapeJson(commitMessage) + "\",\"tree\":\"" + newTreeSha + "\",\"parents\":[\"" + remoteHeadSha + "\"]}";
             String newCommitResponse = postJson(client, apiBase + "/git/commits", token, commitBody);
             String newCommitSha = extractJsonValue(newCommitResponse, "sha");
 
-            // Step 6: Update branch ref
+            // Step 6: Update branch ref on GitHub
             String refBody = "{\"sha\":\"" + newCommitSha + "\"}";
             patchJson(client, apiBase + "/git/refs/heads/" + branch, token, refBody);
 
@@ -144,6 +166,37 @@ public class PushCommand implements Runnable {
         } catch (Exception e) {
             System.err.println("Push failed: " + e.getMessage());
         }
+    }
+
+    private String resolveHead() throws IOException {
+        if (!Files.exists(headPath)) return null;
+
+        String head = Files.readString(headPath).trim();
+        if (head.startsWith("ref: ")) {
+            Path refPath = Path.of(".minigit", head.substring(5));
+            if (Files.exists(refPath)) {
+                return Files.readString(refPath).trim();
+            }
+            return null;
+        }
+        return head;
+    }
+
+    private String extractField(String content, String field) {
+        for (String line : content.split("\n")) {
+            if (line.startsWith(field + " ")) {
+                return line.substring(field.length() + 1);
+            }
+        }
+        return null;
+    }
+
+    private String extractMessage(String content) {
+        int emptyLine = content.indexOf("\n\n");
+        if (emptyLine >= 0) {
+            return content.substring(emptyLine + 2).trim();
+        }
+        return "minigit push";
     }
 
     private String getJson(HttpClient client, String url, String token) throws IOException, InterruptedException {
