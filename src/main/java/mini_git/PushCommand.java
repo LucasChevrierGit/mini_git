@@ -104,12 +104,12 @@ public class PushCommand implements Runnable {
 
         try {
             // Step 1: Get current remote HEAD ref
-            String refResponse = getJson(client, apiBase + "/git/refs/heads/" + branch, token);
-            String remoteHeadSha = extractJsonValue(refResponse, "sha");
+            String refResponse = Json.getJson(client, apiBase + "/git/refs/heads/" + branch, token);
+            String remoteHeadSha = Json.extractJsonValue(refResponse, "sha");
 
             // Step 2: Get base tree SHA from remote
-            String remoteCommitResponse = getJson(client, apiBase + "/git/commits/" + remoteHeadSha, token);
-            String baseTreeSha = extractNestedJsonValue(remoteCommitResponse, "tree", "sha");
+            String remoteCommitResponse = Json.getJson(client, apiBase + "/git/commits/" + remoteHeadSha, token);
+            String baseTreeSha = Json.extractNestedJsonValue(remoteCommitResponse, "tree", "sha");
 
             // Step 3: Create a blob on GitHub for each file in the tree
             List<String> remoteTreeParts = new ArrayList<>();
@@ -126,10 +126,10 @@ public class PushCommand implements Runnable {
                     String encoded = Base64.getEncoder().encodeToString(content);
 
                     String blobBody = "{\"content\":\"" + encoded + "\",\"encoding\":\"base64\"}";
-                    String blobResponse = postJson(client, apiBase + "/git/blobs", token, blobBody);
-                    String remoteBlobSha = extractJsonValue(blobResponse, "sha");
+                    String blobResponse = Json.postJson(client, apiBase + "/git/blobs", token, blobBody);
+                    String remoteBlobSha = Json.extractJsonValue(blobResponse, "sha");
 
-                    remoteTreeParts.add("{\"path\":\"" + escapeJson(filePath) + "\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + remoteBlobSha + "\"}");
+                    remoteTreeParts.add("{\"path\":\"" + Json.escapeJson(filePath) + "\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"" + remoteBlobSha + "\"}");
                     System.out.println(ANSI_GREEN + "BLOB " + filePath + ANSI_RESET);
                     success++;
                 } catch (Exception e) {
@@ -145,17 +145,17 @@ public class PushCommand implements Runnable {
 
             // Step 4: Create tree on GitHub
             String treeBody = "{\"base_tree\":\"" + baseTreeSha + "\",\"tree\":[" + String.join(",", remoteTreeParts) + "]}";
-            String treeResponse = postJson(client, apiBase + "/git/trees", token, treeBody);
-            String newTreeSha = extractJsonValue(treeResponse, "sha");
+            String treeResponse = Json.postJson(client, apiBase + "/git/trees", token, treeBody);
+            String newTreeSha = Json.extractJsonValue(treeResponse, "sha");
 
             // Step 5: Create commit on GitHub
-            String commitBody = "{\"message\":\"" + escapeJson(commitMessage) + "\",\"tree\":\"" + newTreeSha + "\",\"parents\":[\"" + remoteHeadSha + "\"]}";
-            String newCommitResponse = postJson(client, apiBase + "/git/commits", token, commitBody);
-            String newCommitSha = extractJsonValue(newCommitResponse, "sha");
+            String commitBody = "{\"message\":\"" + Json.escapeJson(commitMessage) + "\",\"tree\":\"" + newTreeSha + "\",\"parents\":[\"" + remoteHeadSha + "\"]}";
+            String newCommitResponse = Json.postJson(client, apiBase + "/git/commits", token, commitBody);
+            String newCommitSha = Json.extractJsonValue(newCommitResponse, "sha");
 
             // Step 6: Update branch ref on GitHub
             String refBody = "{\"sha\":\"" + newCommitSha + "\"}";
-            patchJson(client, apiBase + "/git/refs/heads/" + branch, token, refBody);
+            Json.patchJson(client, apiBase + "/git/refs/heads/" + branch, token, refBody);
 
             System.out.println();
             System.out.println("Push complete: " + success + " files in commit " + newCommitSha.substring(0, 7));
@@ -199,76 +199,5 @@ public class PushCommand implements Runnable {
         return "minigit push";
     }
 
-    private String getJson(HttpClient client, String url, String token) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .GET()
-                .build();
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("GET " + url + " returned " + response.statusCode() + ": " + response.body());
-        }
-        return response.body();
-    }
-
-    private String postJson(HttpClient client, String url, String token, String body) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("POST " + url + " returned " + response.statusCode() + ": " + response.body());
-        }
-        return response.body();
-    }
-
-    private String patchJson(HttpClient client, String url, String token, String body) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .header("Content-Type", "application/json")
-                .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("PATCH " + url + " returned " + response.statusCode() + ": " + response.body());
-        }
-        return response.body();
-    }
-
-    private String extractJsonValue(String json, String key) {
-        String searchKey = "\"" + key + "\"";
-        int keyIndex = json.indexOf(searchKey);
-        if (keyIndex < 0) {
-            throw new RuntimeException("Key \"" + key + "\" not found in JSON response");
-        }
-        int colonIndex = json.indexOf(":", keyIndex + searchKey.length());
-        int start = json.indexOf("\"", colonIndex + 1) + 1;
-        int end = json.indexOf("\"", start);
-        return json.substring(start, end);
-    }
-
-    private String extractNestedJsonValue(String json, String outerKey, String innerKey) {
-        String searchKey = "\"" + outerKey + "\"";
-        int outerIndex = json.indexOf(searchKey);
-        if (outerIndex < 0) {
-            throw new RuntimeException("Key \"" + outerKey + "\" not found in JSON response");
-        }
-        String remaining = json.substring(outerIndex);
-        return extractJsonValue(remaining, innerKey);
-    }
-
-    private String escapeJson(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
-    }
 }

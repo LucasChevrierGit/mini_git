@@ -15,6 +15,7 @@ import picocli.CommandLine;
         RemoteCommand.class,
         PushCommand.class,
         CommitCommand.class,
+        FetchCommand.class,
     }
 )
 public class Main implements Runnable {
