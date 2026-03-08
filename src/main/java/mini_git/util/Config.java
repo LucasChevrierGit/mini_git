@@ -1,4 +1,4 @@
-package mini_git;
+package mini_git.util;
 
 import java.io.*;
 import java.nio.file.*;
@@ -23,17 +23,14 @@ public class Config {
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
 
-                // Ignore empty lines and comments
                 if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) {
                     continue;
                 }
 
-                // Section
                 if (line.startsWith("[") && line.endsWith("]")) {
                     currentSection = parseSection(line);
                     sections.putIfAbsent(currentSection, new LinkedHashMap<>());
                 }
-                // Key-value
                 else if (line.contains("=") && currentSection != null) {
                     parseKeyValue(currentSection, line);
                 }

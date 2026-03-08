@@ -1,4 +1,4 @@
-package mini_git;
+package mini_git.command;
 
 import picocli.CommandLine;
 

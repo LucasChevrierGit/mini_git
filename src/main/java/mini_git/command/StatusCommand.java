@@ -1,17 +1,19 @@
-package mini_git;
+package mini_git.command;
 
+import mini_git.core.IndexManager;
+import mini_git.core.ObjectStore;
+import mini_git.util.IgnoreManager;
 import picocli.CommandLine;
 
 import java.io.IOException;
-import java.nio.file.*;
-import java.security.MessageDigest;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @CommandLine.Command(name = "status", description = "Show the working tree status")
 public class StatusCommand implements Runnable {
-
 
     private static final String GREEN = "\u001B[32m";
     private static final String RED = "\u001B[31m";
@@ -28,16 +30,10 @@ public class StatusCommand implements Runnable {
             return;
         }
 
-        Path indexPath = root.resolve("index");
-        Map<String, String> indexed = loadIndex(indexPath);
+        Map<String, String> indexed = IndexManager.loadIndex();
         Set<String> working = listWorkingFiles();
 
-        // Section 1: Changes to be committed (staged files)
-        // new file = in index, exists on disk, hash matches
         List<String> stagedNew = new ArrayList<>();
-        // Section 2: Changes not staged for commit
-        // deleted  = in index, no longer on disk
-        // modified = in index, on disk but hash changed since staging
         List<String> unstagedDeleted = new ArrayList<>();
         List<String> unstagedModified = new ArrayList<>();
         for (Map.Entry<String, String> entry : indexed.entrySet()) {
@@ -46,7 +42,7 @@ public class StatusCommand implements Runnable {
             if (!working.contains(file)) {
                 unstagedDeleted.add(file);
             } else {
-                String currentHash = computeHash(Path.of(file));
+                String currentHash = ObjectStore.computeHash(Path.of(file));
                 if (currentHash != null && !currentHash.equals(storedHash)) {
                     unstagedModified.add(file);
                 }
@@ -77,7 +73,6 @@ public class StatusCommand implements Runnable {
             System.out.println();
         }
 
-        // Section 3: Untracked files
         Set<String> untracked = new TreeSet<>(working);
         untracked.removeAll(indexed.keySet());
         if (!untracked.isEmpty()) {
@@ -94,78 +89,18 @@ public class StatusCommand implements Runnable {
         }
     }
 
-    private Map<String, String> loadIndex(Path indexPath) {
-        if (!Files.exists(indexPath)) {
-            return Collections.emptyMap();
-        }
-        try {
-            Map<String, String> index = new LinkedHashMap<>();
-            for (String line : Files.readAllLines(indexPath)) {
-                String[] parts = line.split(" ", 2);
-                if (parts.length == 2) {
-                    index.put(parts[1], parts[0]);
-                }
-            }
-            return index;
-        } catch (IOException e) {
-            System.err.println("Failed to read index: " + e.getMessage());
-            return Collections.emptyMap();
-        }
-    }
-
-    private String computeHash(Path filePath) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-1");
-            byte[] hash = digest.digest(Files.readAllBytes(filePath));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private Set<String> listWorkingFiles() {
-        Set<String> ignored = loadIgnore();
+        Set<String> ignored = IgnoreManager.loadIgnore();
         try (Stream<Path> paths = Files.walk(current_directory)) {
             return paths
                 .filter(Files::isRegularFile)
                 .map(p -> current_directory.relativize(p).toString())
                 .filter(p -> !p.startsWith(".minigit"))
-                .filter(p -> !isIgnored(p, ignored))
+                .filter(p -> !IgnoreManager.isIgnored(p, ignored))
                 .collect(Collectors.toSet());
         } catch (IOException e) {
             System.err.println("Failed to list working files: " + e.getMessage());
             return Collections.emptySet();
         }
-    }
-
-    private Set<String> loadIgnore() {
-        Path ignorePath = Path.of(".minigit", "ignore");
-        if (!Files.exists(ignorePath)) {
-            return Collections.emptySet();
-        }
-        try {
-            return Files.readAllLines(ignorePath).stream()
-                .map(String::trim)
-                .filter(line -> !line.isEmpty())
-                .collect(Collectors.toSet());
-        } catch (IOException e) {
-            return Collections.emptySet();
-        }
-    }
-
-    private boolean isIgnored(String filePath, Set<String> patterns) {
-        for (String pattern : patterns) {
-            String regex = pattern
-                .replace(".", "\\.")
-                .replace("*", ".*");
-            if (filePath.matches(regex) || filePath.matches(".*/" + regex)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

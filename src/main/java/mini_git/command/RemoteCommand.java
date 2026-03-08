@@ -1,5 +1,6 @@
-package mini_git;
+package mini_git.command;
 
+import mini_git.util.Config;
 import picocli.CommandLine;
 
 import java.nio.file.Path;

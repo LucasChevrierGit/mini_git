@@ -1,5 +1,6 @@
 package mini_git;
 
+import mini_git.command.*;
 import picocli.CommandLine;
 
 @CommandLine.Command(

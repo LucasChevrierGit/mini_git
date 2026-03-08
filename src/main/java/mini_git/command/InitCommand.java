@@ -1,17 +1,11 @@
-package mini_git;
+package mini_git.command;
 
+import mini_git.util.Config;
 import picocli.CommandLine;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @CommandLine.Command(name = "init", description = "Initialize a new mini_git repository")
 public class InitCommand implements Runnable {
@@ -31,7 +25,6 @@ public class InitCommand implements Runnable {
             Files.writeString(root.resolve("HEAD"), "ref: refs/main\n");
             Files.createFile(root.resolve("index"));
 
-            // Basic setup
             Files.writeString(root.resolve("ignore"), ".*\nbazel*\n");
 
             Config config = new Config();
@@ -43,6 +36,4 @@ public class InitCommand implements Runnable {
             System.err.println("Failed to initialize repository: " + e.getMessage());
         }
     }
-
-
 }
